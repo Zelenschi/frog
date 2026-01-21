@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Broasca Exploratoare - Cu funcție Undo</title>
+    <style>
+        :root {
+            --primary: #27ae60;
+            --primary-dark: #1e8449;
+            --secondary: #f0f3f4;
+            --accent: #f1c40f;
+            --code-bg: #2c3e50;
+            --text: #2c3e50;
+            --trail-color: #a9dfbf;
+            --undo-color: #f39c12;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #e8f8f5;
+            color: var(--text);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin: 0;
+            padding: 20px;
+            min-height: 100vh;
+            box-sizing: border-box;
+        }
+
+        h1 { margin-bottom: 5px; color: var(--primary-dark); }
+        .subtitle { margin-bottom: 20px; font-size: 0.9em; color: #7f8c8d; }
+
+        .main-container {
+            display: flex;
+            gap: 20px;
+            background: white;
+            padding: 20px;
+            border-radius: 15px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+            max-width: 1100px;
+            width: 100%;
+            flex-wrap: wrap;
+            justify-content: center;
+            align-items: flex-start;
+        }
+
+        .canvas-container { display: flex; flex-direction: column; gap: 10px; align-items: center; }
+        .canvas-wrapper { position: relative; border: 4px solid var(--text); border-radius: 8px; cursor: pointer; }
+        canvas { display: block; background-color: #fff; border-radius: 4px; }
+        .map-controls { font-size: 0.85em; background: #d4efdf; padding: 8px 15px; border-radius: 20px; }
+
+        .controls { flex: 1; min-width: 350px; display: flex; flex-direction: column; gap: 15px; }
+        .tabs { display: flex; gap: 10px; border-bottom: 2px solid #ecf0f1; padding-bottom: 10px;}
+        .tab-btn { flex: 1; padding: 10px; cursor: pointer; background: transparent; border: none; font-weight: bold; color: #95a5a6; border-radius: 5px; }
+        .tab-btn.active { background: var(--primary); color: white; }
+        .panel { display: none; flex-direction: column; gap: 10px; }
+        .panel.active { display: flex; }
+
+        .btn-group { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        button { padding: 12px; font-size: 15px; cursor: pointer; border: none; border-radius: 6px; background-color: var(--primary); color: white; font-weight: 600; }
+        button.undo { background-color: var(--undo-color); grid-column: span 2; }
+        button.reset { background-color: #e74c3c; margin-top: auto; }
+        button.run { background-color: #2980b9; padding: 15px; }
+
+        textarea { width: 100%; height: 200px; font-family: monospace; padding: 15px; border-radius: 5px; background-color: var(--code-bg); color: #2ecc71; box-sizing: border-box; }
+        .doc-box { background: #f8f9f9; border: 1px solid #bdc3c7; border-radius: 5px; padding: 10px; font-size: 0.85em; }
+        .cmd { font-family: monospace; font-weight: bold; color: #d35400; }
+
+        .status-bar { margin-top: 5px; font-weight: bold; min-height: 24px; color: var(--primary-dark); padding: 8px; border-radius: 4px; background: #d5f5e3; text-align: center; }
+    </style>
+</head>
+<body>
+
+    <h1>🐸 Broasca Exploratoare</h1>
+    <div class="subtitle">Mod interactiv cu funcție de Anulare (Undo)</div>
+
+    <div class="main-container">
+        <div class="canvas-container">
+            <div class="canvas-wrapper">
+                <canvas id="gridCanvas" width="400" height="400"></canvas>
+            </div>
+            <div class="map-controls">🖱️ <b>Click</b> pentru obstacole (🪨)</div>
+        </div>
+
+        <div class="controls">
+            <div class="tabs">
+                <button class="tab-btn active" onclick="switchTab('interactive')">🎮 Manual</button>
+                <button class="tab-btn" onclick="switchTab('code')">💻 Programare</button>
+            </div>
+
+            <div id="interactive" class="panel active">
+                <div class="btn-group">
+                    <button onclick="actionStep()">PAS 🎨</button>
+                    <button onclick="actionJump()">SALT 💨</button>
+                    <button onclick="actionTurn()">ROTEȘTE 🔄</button>
+                    <button class="undo" onclick="undoAction()">↩️ ANULEAZĂ (UNDO)</button>
+                </div>
+            </div>
+
+            <div id="code" class="panel">
+                <textarea id="codeEditor" spellcheck="false">REPETA 4 {
+  PAS
+  PAS
+  ROTESTE
+}</textarea>
+                <div class="doc-box">
+                    <b>Comenzi:</b> <span class="cmd">PAS, SALT, ROTESTE, REPETA n {..}, DACA BLOCAT {..}</span>
+                </div>
+                <button class="run" onclick="runCode()">▶ Execută Codul</button>
+            </div>
+
+            <div class="status-bar" id="status">Salut!</div>
+            <button class="reset" onclick="resetGame()">🗑️ Șterge Tot</button>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gridCanvas');
+        const ctx = canvas.getContext('2d');
+        const GRID_SIZE = 10; 
+        const CELL_SIZE = 40; 
+        
+        let frog = { x: 0, y: 0, dir: 0 };
+        let coloredCells = [];
+        let obstacles = [];
+        let history = []; // Stiva pentru Undo
+        let isRunning = false;
+
+        function saveHistory() {
+            // Salvăm o copie a stării actuale înainte de modificare
+            history.push(JSON.stringify({
+                frog: { ...frog },
+                coloredCells: [...coloredCells]
+            }));
+            // Limităm istoria la ultimele 50 de mutări pentru performanță
+            if (history.length > 50) history.shift();
+        }
+
+        function undoAction() {
+            if (isRunning) return;
+            if (history.length === 0) {
+                setStatus("Nu mai am ce anula!");
+                return;
+            }
+            const prevState = JSON.parse(history.pop());
+            frog = prevState.frog;
+            coloredCells = prevState.coloredCells;
+            draw();
+            setStatus("Am făcut un pas înapoi.");
+        }
+
+        canvas.addEventListener('mousedown', (e) => {
+            if (isRunning) return;
+            const rect = canvas.getBoundingClientRect();
+            const gx = Math.floor((e.clientX - rect.left) / CELL_SIZE);
+            const gy = Math.floor((e.clientY - rect.top) / CELL_SIZE);
+            if (gx === frog.x && gy === frog.y) return;
+            const key = `${gx},${gy}`;
+            const idx = obstacles.indexOf(key);
+            idx > -1 ? obstacles.splice(idx, 1) : obstacles.push(key);
+            draw();
+        });
+
+        function resetGame() {
+            frog = { x: 0, y: 0, dir: 0 };
+            coloredCells = [];
+            obstacles = [];
+            history = [];
+            setStatus("Resetat.");
+            draw();
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.strokeStyle = "#e5e7e9";
+            for (let i = 0; i <= GRID_SIZE; i++) {
+                ctx.beginPath(); ctx.moveTo(i * CELL_SIZE, 0); ctx.lineTo(i * CELL_SIZE, canvas.height); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(0, i * CELL_SIZE); ctx.lineTo(canvas.width, i * CELL_SIZE); ctx.stroke();
+            }
+            ctx.fillStyle = "#a9dfbf";
+            coloredCells.forEach(cell => ctx.fillRect(cell.x * CELL_SIZE + 1, cell.y * CELL_SIZE + 1, CELL_SIZE - 2, CELL_SIZE - 2));
+            ctx.font = "24px Arial"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+            obstacles.forEach(obs => {
+                const [ox, oy] = obs.split(',').map(Number);
+                ctx.fillText("🪨", ox * CELL_SIZE + 20, oy * CELL_SIZE + 20);
+            });
+            drawFrog();
+        }
+
+        function drawFrog() {
+            ctx.save();
+            ctx.translate(frog.x * CELL_SIZE + 20, frog.y * CELL_SIZE + 20);
+            ctx.rotate(frog.dir * 90 * Math.PI / 180);
+            ctx.font = "30px Arial"; ctx.fillText("🐸", 0, 0);
+            ctx.fillStyle = "#f1c40f"; ctx.beginPath(); ctx.arc(14, 0, 3, 0, 7); ctx.fill();
+            ctx.restore();
+        }
+
+        function moveFrog(shouldColor) {
+            let nX = frog.x, nY = frog.y;
+            if (frog.dir === 0) nX++; else if (frog.dir === 1) nY++; else if (frog.dir === 2) nX--; else nY--;
+
+            if (nX < 0 || nX >= GRID_SIZE || nY < 0 || nY >= GRID_SIZE || obstacles.includes(`${nX},${nY}`)) {
+                setStatus("Blocat!"); return false;
+            }
+
+            saveHistory(); // Salvăm starea înainte de a muta
+            frog.x = nX; frog.y = nY;
+            if (shouldColor && !coloredCells.some(c => c.x === frog.x && c.y === frog.y)) {
+                coloredCells.push({ x: frog.x, y: frog.y });
+            }
+            draw();
+            return true;
+        }
+
+        function actionStep() { moveFrog(true); setStatus("Pas colorat."); }
+        function actionJump() { moveFrog(false); setStatus("Salt."); }
+        function actionTurn() { saveHistory(); frog.dir = (frog.dir + 1) % 4; draw(); setStatus("Rotit."); }
+
+        // Interpretorul rămâne neschimbat, dar am adăugat funcțiile necesare rulării
+        async function runCode() {
+            if (isRunning) return; isRunning = true;
+            history = []; // Ștergem istoria la rulare automată
+            frog = { x: 0, y: 0, dir: 0 }; coloredCells = []; draw();
+            const tokens = document.getElementById('codeEditor').value.replace(/([{}])/g, ' $1 ').trim().split(/\s+/).map(t => t.toUpperCase());
+            try { await executeBlock(tokens); setStatus("Cod finalizat!"); } catch (e) { setStatus("Eroare cod!"); }
+            isRunning = false;
+        }
+
+        async function executeBlock(tokens) {
+            let i = 0;
+            while (i < tokens.length) {
+                const t = tokens[i];
+                if (t === "PAS") { actionStep(); await new Promise(r => setTimeout(r, 400)); }
+                else if (t === "SALT") { actionJump(); await new Promise(r => setTimeout(r, 400)); }
+                else if (t === "ROTESTE") { actionTurn(); await new Promise(r => setTimeout(r, 400)); }
+                else if (t === "REPETA") {
+                    let n = parseInt(tokens[++i]); i++; 
+                    let depth = 1, body = [], k = i + 1;
+                    while (k < tokens.length && depth > 0) {
+                        if (tokens[k] === "{") depth++; if (tokens[k] === "}") depth--;
+                        if (depth > 0) body.push(tokens[k]); k++;
+                    }
+                    for (let r = 0; r < n; r++) await executeBlock(body);
+                    i = k; continue;
+                }
+                i++;
+            }
+        }
+
+        function switchTab(t) {
+            document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
+            document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
+            document.querySelector(`button[onclick="switchTab('${t}')"]`).classList.add('active');
+            document.getElementById(t).classList.add('active');
+        }
+        function setStatus(m) { document.getElementById('status').innerText = m; }
+        draw();
+    </script>
+</body>
+</html>
